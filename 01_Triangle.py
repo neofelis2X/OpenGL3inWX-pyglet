@@ -18,56 +18,6 @@ import ctypes
 import numpy as np
 
 
-def compile_shader(filepath: str, shader_type: type) -> int:
-    '''Take a path to an opengl shader as string,
-    prepare it with ctypes and compile a shader
-        Parameters:
-            shader_src: shader source code as string
-        Returns:
-            A handle to the compiled shader object
-    '''
-    with open(filepath,'r', encoding='utf-8') as f:
-        shader_src = f.read()
-
-    b_src = shader_src.encode('utf-8')
-    src_len = ctypes.c_int(len(b_src))
-    src_pointer = ctypes.cast(ctypes.c_char_p(b_src), ctypes.POINTER(ctypes.c_char))
-
-    shader_id = glCreateShader(shader_type)
-    glShaderSource(shader_id, 1, src_pointer, src_len)
-    glCompileShader(shader_id)
-
-    return shader_id
-
-def create_shader_program(vertex_filepath: str, fragment_filepath: str) -> int:
-    """
-        Compile and link shader modules to make a shader program.
-        Parameters:
-            vertex_filepath: path to the text file storing the vertex
-                             source code
-            fragment_filepath: path to the text file storing the
-                               fragment source code
-        Returns:
-            A handle to the created shader program
-    """
-
-    # Create and compile the shader objects
-    vert_sh_id = compile_shader(vertex_filepath, GL_VERTEX_SHADER)
-    frag_sh_id = compile_shader(fragment_filepath, GL_FRAGMENT_SHADER)
-
-    # Link the shader in one program
-    program_id = glCreateProgram()
-    glAttachShader(program_id, vert_sh_id)
-    glAttachShader(program_id, frag_sh_id)
-    glLinkProgram(program_id)
-
-    # Shader objects no longer needed
-    glDetachShader(program_id, vert_sh_id)
-    glDetachShader(program_id, frag_sh_id)
-
-    return program_id
-
-
 class Triangle:
     """
         Yep, it's a triangle.
@@ -150,49 +100,53 @@ class MyCanvasBase(glcanvas.GLCanvas):
         self.init = False
         self.parent = parent
         self.status_text = status_text
+        self.aspect = 1.0
 
         # Initial mouse position.
         self.lastx = self.x = 30
         self.lasty = self.y = 30
         self.size = None
-        self.Bind(wx.EVT_ERASE_BACKGROUND, self.OnEraseBackground)
-        self.Bind(wx.EVT_SIZE, self.OnSize)
-        self.Bind(wx.EVT_PAINT, self.OnPaint)
-        self.Bind(wx.EVT_LEFT_DOWN, self.OnMouseDown)
-        self.Bind(wx.EVT_LEFT_UP, self.OnMouseUp)
-        self.Bind(wx.EVT_MOTION, self.OnMouseMotion)
+        self.Bind(wx.EVT_ERASE_BACKGROUND, self.on_erase_background)
+        self.Bind(wx.EVT_SIZE, self.on_size)
+        self.Bind(wx.EVT_PAINT, self.on_paint)
+        self.Bind(wx.EVT_LEFT_DOWN, self.on_mouse_down)
+        self.Bind(wx.EVT_LEFT_UP, self.on_mouse_up)
+        self.Bind(wx.EVT_MOTION, self.on_mouse_motion)
 
+    def get_aspect(self):
+        return self.aspect
 
-    def OnEraseBackground(self, event):
+    def on_erase_background(self, event):
         pass  # Do nothing, to avoid flashing on MSW.
 
-    def OnSize(self, event):
-        wx.CallAfter(self.DoSetViewport)
+    def on_size(self, event):
+        wx.CallAfter(self.do_set_viewport)
         event.Skip()
 
-    def DoSetViewport(self):
+    def do_set_viewport(self):
         size = self.size = self.GetClientSize() * self.GetContentScaleFactor()
+        self.aspect = size.width / size.height
         self.SetCurrent(self.wx_context)
         glViewport(0, 0, size.width, size.height)
 
-    def OnPaint(self, event):
+    def on_paint(self, event):
         self.SetCurrent(self.wx_context)
         if not self.init:
-            self.InitGL(self.status_text)
+            self.init_gl(self.status_text)
             self.init = True
-        self.OnDraw()
+        self.on_draw()
 
-    def OnMouseDown(self, event):
+    def on_mouse_down(self, event):
         if self.HasCapture():
             self.ReleaseMouse()
         self.CaptureMouse()
         self.x, self.y = self.lastx, self.lasty = event.GetPosition()
 
-    def OnMouseUp(self, event):
+    def on_mouse_up(self, event):
         if self.HasCapture():
             self.ReleaseMouse()
 
-    def OnMouseMotion(self, event):
+    def on_mouse_motion(self, event):
         if event.Dragging() and event.LeftIsDown():
             self.lastx, self.lasty = self.x, self.y
             self.x, self.y = event.GetPosition()
@@ -201,7 +155,7 @@ class MyCanvasBase(glcanvas.GLCanvas):
 
 class Canvas(MyCanvasBase):
     '''Use OpenGL canvas'''
-    def InitGL(self, status_text: wx.StaticText):
+    def init_gl(self, status_text: wx.StaticText):
         '''Initialise ogl context'''
         self.fps_status = status_text
         self.last_time = 0
@@ -217,9 +171,9 @@ class Canvas(MyCanvasBase):
         glEnable(GL_CULL_FACE)
 
         self._create_assets()
+        self.do_set_viewport()
 
-
-    def OnDraw(self):
+    def on_draw(self):
         '''Drawcall, clear the stage, prepare a new frame and
         eventually swap buffers
         '''
@@ -228,6 +182,8 @@ class Canvas(MyCanvasBase):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         # Activate the compiled shader program for use
         glUseProgram(self.sh_program)
+        aspect_ratio = self.get_aspect()
+        glUniform1f(glGetUniformLocation(self.sh_program, b'aspect'), aspect_ratio)
 
         # Activate the vertex array buffer for the objects to draw
         self.triangle.arm_for_drawing()
@@ -249,7 +205,56 @@ class Canvas(MyCanvasBase):
         # Shader program
         vert_filepath = "shaders/vertex.glsl"
         frag_filepath = "shaders/fragment.glsl"
-        self.sh_program = create_shader_program(vert_filepath, frag_filepath)
+        self.sh_program = self.create_shader_program(vert_filepath, frag_filepath)
+
+    def compile_shader(self, filepath: str, shader_type: type) -> int:
+        '''Take a path to an opengl shader as string,
+        prepare it with ctypes and compile a shader
+            Parameters:
+                shader_src: shader source code as string
+            Returns:
+                A handle to the compiled shader object
+        '''
+        with open(filepath,'r', encoding='utf-8') as f:
+            shader_src = f.read()
+
+        b_src = shader_src.encode('utf-8')
+        src_len = ctypes.c_int(len(b_src))
+        src_pointer = ctypes.cast(ctypes.c_char_p(b_src), ctypes.POINTER(ctypes.c_char))
+
+        shader_id = glCreateShader(shader_type)
+        glShaderSource(shader_id, 1, src_pointer, src_len)
+        glCompileShader(shader_id)
+
+        return shader_id
+
+    def create_shader_program(self, vertex_filepath: str, fragment_filepath: str) -> int:
+        """
+            Compile and link shader modules to make a shader program.
+            Parameters:
+                vertex_filepath: path to the text file storing the vertex
+                                source code
+                fragment_filepath: path to the text file storing the
+                                fragment source code
+            Returns:
+                A handle to the created shader program
+        """
+
+        # Create and compile the shader objects
+        vert_sh_id = self.compile_shader(vertex_filepath, GL_VERTEX_SHADER)
+        frag_sh_id = self.compile_shader(fragment_filepath, GL_FRAGMENT_SHADER)
+
+        # Link the shader in one program
+        program_id = glCreateProgram()
+        glAttachShader(program_id, vert_sh_id)
+        glAttachShader(program_id, frag_sh_id)
+        glLinkProgram(program_id)
+
+        # Shader objects no longer needed
+        glDetachShader(program_id, vert_sh_id)
+        glDetachShader(program_id, frag_sh_id)
+
+        return program_id
 
     def calc_frametime(self) -> None:
         """
@@ -277,7 +282,7 @@ class OpenGLDemoWindow(wx.Frame):
     def __init__(self):
         super().__init__(parent=None,
         				  title='OpenGL 01: Triangle',
-        				  size = (480, 480))
+        				  size = (480, 390))
 
         topsizer = wx.BoxSizer(wx.VERTICAL)
         footer_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -297,6 +302,7 @@ class OpenGLDemoWindow(wx.Frame):
 
         self.SetSizer(topsizer)
         self.SetMinClientSize((312, 72))
+        self.CenterOnScreen()
         self.Show(True)
 
     def on_close(self, event):
