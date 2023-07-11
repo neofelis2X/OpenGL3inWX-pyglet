@@ -79,10 +79,14 @@ class MyCanvasBase(glcanvas.GLCanvas):
     '''Create OpenGL canvas and context'''
     def __init__(self, parent, status_text: wx.StaticText):
 
+        sampling = True
         # Canvas attributes
         disp_attrs = wx.glcanvas.GLAttributes()
         # Set a 24bit depth buffer and activate double buffering for the canvas
-        disp_attrs.PlatformDefaults().DoubleBuffer().Depth(24).EndList()
+        disp_attrs.PlatformDefaults().DoubleBuffer().Depth(24)
+        if sampling:
+            disp_attrs.SampleBuffers(1).Samplers(4)
+        disp_attrs.EndList()
         glcanvas.GLCanvas.__init__(self, parent, disp_attrs, -1)
 
         # Context attributes
@@ -90,9 +94,9 @@ class MyCanvasBase(glcanvas.GLCanvas):
         cxt_attrs = glcanvas.GLContextAttrs()
         cxt_attrs.PlatformDefaults().CoreProfile().MajorVersion(3).MinorVersion(3).EndList()
         self.wx_context = glcanvas.GLContext(self, ctxAttrs=cxt_attrs)
-        # Feed the wx context to pyglet.
-        # I'm surprised that this works, but somehow it does...
-        self.pyg_context = pyglet.gl.Context(self.wx_context)
+        self.SetCurrent(self.wx_context)
+        # Feed the wx context to pyglet by giving it the currently activated context
+        self.pyg_context = pyglet.gl.Context(pyglet.gl.current_context)
         # pyglet needs have a canvas so we define our new wx canvas
         self.pyg_context.canvas = self
         self.pyg_context.set_current()
